@@ -1,0 +1,591 @@
+---
+title: "Introduction to Clustering"
+author: "Ted Laderas"
+date: "May 5, 2015"
+runtime: shiny
+output: slidy_presentation
+---
+## What is Clustering?
+
+Clustering is a method for finding groupings in data. 
+
+The data must be at least ordinal (categorical or continuous, but with some implied order) and in matrix format. The data does not all have to be the same type (you can mix continuous and categorical)
+
+For example, if we had data from a survey on a Likert scale from a number of participants. We could represent the data with questions on the rows and participants as columns. So a column would represent the answers for a single participant, and a row would represent a question's answers for all participants.
+
+We could cluster on questions (resulting in groupings of questions), or on participants (resulting in groupings of participants).
+
+##Clustering Caveats
+
+Clustering is really only for exploring data. It's not a final result in itself. 
+
+## Clustering
+
+Let's start with some time series data so we can try out our clustering algorithms.
+
+We'll start with some basic profile shapes.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+#this code chunk generates a dataset
+data(iris)
+
+require(shiny)
+require(dplyr)
+require(ggvis)
+require(reshape2)
+require(fpc)
+```
+
+## Garbage In, Garbage Out
+
+Clustering algorithms will always give you an answer. Whether the grouping makes sense or not depends on the quality of data you are including. Cleaning and filtering your data prior to putting it in a clustering algorithm is critical. 
+
+Missing data can also affect the output of a clustering, so it is critical to assess whether how much of your data is missing. Some methods have explicit ways to deal with missing values and it's important to understand what the methods are doing.
+
+It's also important to assess what is signal and what is noise. 
+
+## Distance Metric
+
+The first choice you must make in using a clustering algorithm is choosing your *distance metric*. This is critical, because it determines what qualities of your data. 
+
+We'll talk about two distance metrics: *Euclidean* and *Correlation* (Non parametric distance metrics are also potentially interesting, including rank-based (spearman's) correlation). Correlation-based clustering basically looks at shape, but ignores magnitude. Euclidean distance ignores shape, but considers magnitude. Let's explore the difference between them. Which two profiles are the closest in terms of euclidean distance? Which two profiles are closest in terms of correlation?
+
+We use the distance metric to calculate a *distance matrix*, which gives a sense for how 'close' two profiles are in your data. The [ith,jth] entry in the distance matrix gives the distance between profile *i* and profile *j* in your data. (Note the distance matrix is symmetric about the diagonal, so [i,j] == [j,i], and that [i,i] == 0). 
+
+```{r, echo=FALSE}
+#this code chunk looks at three profiles and shows the distance between them.
+library(shiny)
+library(reshape2)
+library(ggplot2)
+
+timeP <- c(0,10,20,30)
+exampleData <- data.frame(time=timeP, profile1 = (3 * (sin(timeP) + 1 + 3)), 
+                          profile2 = (0.5*sin(timeP)+1), 
+                          profile3 = c(1.4, 1.2, 1.1, 0.5))
+exMelt <- melt(exampleData, id.vars="time")
+
+corDist <- function(x) as.dist(1-cor(t(x)))
+
+#calculate the two different distance matrices
+eucMat <- as.matrix(dist(t(exampleData[,-1])))
+corMat <- as.matrix(corDist(t(exampleData[,-1])))
+
+shinyApp(
+  ui = fluidPage(
+    sidebarLayout(
+      sidebarPanel(radioButtons(inputId="distance", 
+                                label="Distance Metric",
+                                choices=c("euclidean", "correlation"),
+                                selected = "euclidean"),
+                    tableOutput("table")
+                   ), 
+                               mainPanel(plotOutput("distPlot")
+                                        )
+    )
+  ),
+  server = function(input,output){
+    output$distPlot <- renderPlot(
+      ggplot(exMelt, aes(x=time, y=value, group=variable, 
+                         colour=variable)) + geom_line() + geom_point()
+    )
+    output$table <- renderTable(
+      outMat <- switch(input$distance,
+             "euclidean" = eucMat, "correlation" = corMat)
+    )
+  }
+)
+```
+
+## Trees versus Partitional Methods
+
+Once we've selected our distance metric, the next choice is to choose whether what flavor of method we want to use.
+
+Tree-based methods include (Correlation/Euclidean):
+
+- Average Link-based Clustering
+- Divisive Clustering (DIANA)
+
+Partition/Grid based methods include (Euclidean):
+
+- k-means
+- Self Organized Maps
+
+Density-Based Methods (Correlation/Euclidean):
+
+- DBSCAN
+
+## Partition-based methods
+
+The trick with these methods is that you have to know the number of clusters you're looking for in the first place.
+
+Most of these methods attempt to minimize a within-cluster sum-of-squares (they try to make the clusters as tight as possible) to find the best set of clusterings. The start points for the clusters are usually chosen at random, but are refined iteratively.
+
+They are a subset of Expectation-Maximization (EM) algorithms.
+
+## Density Based Clustering (DBSCAN)
+
+In contrast to regular partition based methods, DBSCAN (Density Based Spatial Clustering of Applications with Noise) is the most common form of Density Based Clustering. For the most part, Density based clustering methods assume that all clusters have a uniform density.
+
+Density Based clustering methods are used in Flow Cytometry for identifying cell populations based on the expression of different cell markers.
+
+Try the advancing the movie below to see how DBSCAN works.
+
+  - Assumption that areas of higher density in the data correspond to clusters of interest.
+  - Selects boundaries of clusters by detecting changes in density
+  - Starts with "seed" points and grows the cluster out from the seed
+
+```{r, echo=FALSE}
+#DBSCAN movie
+slideInd <- 1
+shinyApp(
+  ui = fluidPage(
+    sidebarLayout(
+      sidebarPanel(actionButton(inputId="reset", "Start Over"),
+                   actionButton(inputId="advance", "Advance")
+                   ), 
+                               mainPanel(imageOutput("distPlot")
+                                       )
+    )
+  ),
+  server = function(input,output){
+     values <- reactiveValues(i = 1)
+    
+      observe({
+        input$advance
+        isolate({
+          if(values$i < 18) {values$i <- values$i + 1}
+          else{values$i <- 19}
+          })
+        })
+    
+      observe({
+        input$reset
+        isolate({values$i <- 1})
+        })
+    
+    output$distPlot <- renderImage({
+
+      if(values$i < 10){
+        slideOut <- paste("0",values$i,sep="")}
+        else{slideOut <- as.character(values$i)}
+      filename <- normalizePath(file.path('dbscanMovie/',
+                              paste('Rplot', slideOut, '.png', sep='')))
+      #print(filename)
+    # Return a list containing the filename
+    list(src = filename)
+    }, deleteFile = FALSE)
+  }  
+)
+```
+
+## Exploring k-means versus DBSCAN
+
+Compare the k-means and the DBSCAN algorithms. What are the parameters for each? What happens when you change the parameters?
+
+Note that for DBSCAN, unreachable (noise) points are colored as light gray.
+```{r, echo=FALSE}
+#dbscan()
+#need reachability parameter
+library(fpc)
+
+##This code is modified from Joe cheng's k-means example.
+##modify number of iterations
+##specify cluster centers - start point
+shinyApp(
+  ui = fluidPage(
+    sidebarLayout(
+      sidebarPanel( radioButtons(inputId="algorithm", 
+                                    label = "Algorithm", 
+                                    choices=c("kmeans", "dbscan"), 
+                                    selected="kmeans"),
+        uiOutput("ui")
+                      
+                   ),
+      mainPanel(plotOutput("plotClust"))
+      )
+    ),
+  
+  server = function(input, output){
+      newIris <- iris[,c(1:2)]
+      
+      #start with the same random centers
+      centers <- as.matrix(newIris[c(2,50,100),])
+      
+      output$ui <- renderUI({
+
+    # Depending on input$input_type, we'll generate a different
+    # UI component and send it to the client.
+    switch(input$algorithm,
+      "kmeans" = numericInput(inputId = "clusters",
+                               label = "Number of Clusters (k)",
+                               min = 1, max=10,value = 2),
+      "dbscan" = sliderInput(inputId = "eps", "Reachability Distance",
+                             min = 0.001, max = 0.5,
+                         value = 0.1)
+        )
+      })
+      
+      clusters <- reactive({
+          if(input$algorithm == "kmeans"){
+            out <- suppressWarnings(kmeans(newIris, centers = input$clusters))}
+          if(input$algorithm == "dbscan"){
+            out <- dbscan(newIris, eps=input$eps)
+
+            #change unreachable points to have value 10 (so they'll be plotted
+            #as light grey)
+            out$cluster <- ifelse(out$cluster == 0,10,out$cluster)  
+            out$seeds <- newIris[which(out$isseed),]
+          }
+          out
+              })
+  
+      output$plotClust <- renderPlot({
+        par(mar = c(5.1, 4.1, 0, 1))
+        palette(c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
+                "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#994C00", "#C0C0C0"))
+        plot(newIris, col = clusters()$cluster, pch = 20, cex = 3)
+        if(input$algorithm == "kmeans"){
+          points(clusters()$centers, pch = 4, cex = 4, lwd = 4)}
+        if(input$algorithm == "dbscan"){
+          #points(clusters()$seeds, pch = 6, cex = 4, lwd = 4)
+        }
+    })
+  }
+  
+  )
+
+```
+
+## Self-Organized Maps
+
+Self Organized Maps impose an additional geometry onto the space, which can be useful if you know this geometry exists. The cluster relationships must reflect the topology of the map.
+
+## What if I don't know K?
+
+You probably shouldn't use a partitional algorithm then. There are heuristic search methods (such as the sliding window) for determining K, but you should take caution when using these.
+
+Also, partitional algorithms aren't guaranteed to find the optimal solution, which is one weakness of EM algorithms. They may get stuck in a local optima, so running the algorithm multiple times is recommended to see if your solution is robust or not. The kmeans implementation in R automatically does this.
+
+## Building a Tree - Bottom Up
+
+Agglomerative clustering starts out at the individual level and slowly builds up.
+
+1. We first take the pair of profiles that are the most similar using our distance metric, and then make them into a single profile by aggregating. Those two profiles are removed, and the new profile is calculated. Note that the dimensions of our distance matrix gets smaller with each merge, until we are left with only a few values.
+
+2. Then we need to recalculate the distance of this new profile to the other profiles in the group. 
+
+3. We repeat steps 1 and 2. until we are left with a single cluster.
+
+The method for aggregating determines the name of the algorithm (average-link, etc.)
+
+## Agglomerative clustering in multiple steps
+
+```{r}
+##want app with a next step
+##try to build trees from cluster order
+
+#look at hclust$merge matrix
+```
+
+## Building a Tree - Top Down
+
+Divisive clustering starts with everyone and tries to find divisions. You can kind of think of this as running the k-means algorithm in multiple iterations, each time on the clusters produced by the previous iteration.
+
+## Interpreting the Tree
+
+The trees are important to understand. They will give you a idea of how strong the clusters are in the data. 
+
+Ideally, you want a tree with some depth, and with balanced clusters. Again, having noisy data will affect this.
+
+## Cutting the Tree
+
+When we use a hierarchical algorithm, we need to cut the tree into clusters. We tend to do this by cutting the tree at a specific height.
+
+cutree() in R will attempt to cut a tree at a height based on the number of clusters you give it, but it's not a guaranteed output if that number doesn't exist at some level in the tree.
+
+```{r,echo = FALSE}
+#dynamic code showing groupings here
+shinyApp(
+  ui = fluidPage(
+    sidebarLayout(
+      sidebarPanel(sliderInput(inputId = "height",label = "Tree Height",min = 0, max=9,value = 3,step = .5)),
+      mainPanel(plotOutput("plotHeight"))
+      )
+    ),
+  
+  server = function(input, output){
+
+    tree <- hclust(dist(iris[,1:4]))
+
+    output$plotHeight <- renderPlot({
+          plot(tree)
+          abline(h = input$height, col="blue")
+          rect.hclust(tree, h =input$height)          
+    })
+  }
+  
+  )
+
+```
+
+## Heatmaps and scaling
+
+Heatmaps are a color matrix representation of data. In a heatmap, the data is usually scaled and centered around the midpoint of the data, so that roughly half of the data is considered high and half is considered low.
+
+Based on the dendrogram, who is the most different country in terms of food usage?
+
+Try the visualizing the heatmap with different scaling. What happens to the representation? Does the dendrogram change?
+
+```{r,echo = FALSE}
+library(gplots)
+library(cluster.datasets)
+data("european.foods")
+ef <- european.foods[,-c(1,2)]
+rownames(ef) <- make.names(european.foods$name)
+colnames(ef) <- c("WestGermany", "Italy", "France", "Netherlands", "Belgium",
+                  "Luxembourg", "Great Britain", "Portugal", "Austria", "Switzerland",
+                  "Sweden", "Denmark", "Norway", "Finland", "Spain", "Ireland")
+
+#dynamic code showing groupings here
+shinyApp(
+  ui = fluidPage(
+    sidebarLayout(
+      sidebarPanel(radioButtons(inputId = "scaling", "Scale Values", 
+                                choices = c("none", "row", "column"),
+                                selected = "none")
+                  ),
+      mainPanel(plotOutput("scaleHeatmap"))
+      )
+    ),
+  
+  server = function(input, output){
+
+    output$scaleHeatmap <- renderPlot({
+        my_palette <- colorRampPalette(c("red", "black", "green"))(n = 50)
+
+          distFunc <- function(x) as.dist(1-cor(t(x)))
+          heatmap.2(as.matrix(ef), distfun = distFunc, 
+                    density.info="none", trace="none", 
+                    scale=input$scaling, col=my_palette,
+                    dendrogram = c("column")
+                    )
+
+    })
+  }
+  
+  )
+
+```
+
+## The effect of noise on correlation-based algorithms
+
+Try out the app below with different numbers of clusters and see the effect of adding noise to the profiles. Start with k = 2. What happens to the cluster memberships when you add noise? 
+
+```{r, echo=FALSE,warning=FALSE, message=FALSE}
+###want dataset with slider
+###increase amplitude (range of noise) via multiplier?
+###maybe add filtering parameter?
+
+iris1 <- data.frame(ID=rownames(iris),iris)
+iris1 <- iris1[sample(nrow(iris1),size = 30),]
+#iris2 <- melt(iris1, ID=ID)
+irisRow <- nrow(iris1)
+      irisCol <- 4
+      noisemat <- matrix(nrow = irisRow, ncol=irisCol, data = rnorm(n=irisRow * irisCol, mean = 0, sd = 1))
+
+shinyApp(
+  ui = fluidPage(
+    titlePanel("Exploring Clusters in Iris Data"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(inputId = "noise", label="Noise", min=0, max = 4, value = 0, step= 0.2),
+      numericInput("clusters", "Cluster Count", 3, min = 1, max=9),
+      dataTableOutput("table")  
+    ),
+    mainPanel(
+      ggvisOutput("plot2")
+    )
+  )
+  ),
+  
+  server = function(input, output) {
+    iris3 <- reactive({
+            
+      out <- iris1[,2:5] + (noisemat * input$noise)
+      out <- data.frame(ID=iris1[,1], out, Species=iris1[,6])
+      out
+    })
+    
+    iris4 <- reactive({
+      melt(iris3(), ID=ID)
+    })
+    
+    clusters <- reactive({
+    #select distance metric
+    
+    distMat <- as.dist(1-cor(t(iris3()[,-c(1,6)])))
+    
+    #run clustering algorithm and cut tree to number of clusters
+    clusts <- cutree(hclust(distMat), k = input$clusters)    
+    clusts 
+  })
+  
+  output$table <- renderDataTable({
+    #count the number of flowers in each cluster
+    data.frame(table(clusters()))
+  }, options=list(searching = FALSE, paging=FALSE))
+  
+  clustPlot <- reactive({
+    
+    colPal <- c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3",
+                "#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999")
+    #make cluster assignments compatible with melted iris data frame
+    clusts <- as.character(rep(clusters(),4))
+    
+    #print(head(iris4()))
+    
+    #actual plot
+    data.frame(iris4(), clusts) %>% 
+      #map properties
+      ggvis(x=~variable, y=~value) %>%
+      #group by ID (so each flower is represented by a line)
+      group_by(ID) %>%
+      #specify that we want a line and color by cluster assignment
+      layer_lines(stroke=~clusts) %>%
+      #specify the mapping
+      scale_ordinal("stroke", domain=as.character(c(1:9)), range=colPal)
+      
+  }) 
+  
+  clustPlot %>% bind_shiny("plot2")
+  },
+  options = list(height = 500)
+)
+```
+
+## The effect of noise on correlation-based algorithms (Heatmap version)
+
+This is the same data, but with a different representation, known as a heatmap. In a heatmap, the data is usually scaled and centered around the midpoint of the data, so that roughly half of the data is considered high and half is considered low.
+
+Note the species of each row is represented by a color. What happens to the cluster memberships when you add noise? 
+
+Try tracking the membership of a pair of irises (for example 121 and 113) and see whether they stay in the same cluster as you add more and more noise.
+
+```{r, echo=FALSE,warning=FALSE, message=FALSE}
+###want dataset with slider
+###increase amplitude (range of noise) via multiplier?
+###maybe add filtering parameter?
+###keep same noise matrix overall, just scale it
+
+library(gplots)
+
+iris1 <- data.frame(ID=rownames(iris),iris)
+iris1 <- iris1[sample(nrow(iris1),size = 30),]
+#iris2 <- melt(iris1, ID=ID)
+irisRow <- nrow(iris1)
+irisCol <- 4
+noisemat <- matrix(nrow = irisRow, ncol=irisCol, data = rnorm(n=irisRow * irisCol, mean = 0, sd = 1)) 
+
+shinyApp(
+  ui = fluidPage(
+    titlePanel("Exploring Clusters in Iris Data"),
+  sidebarLayout(
+    sidebarPanel(
+      sliderInput(inputId = "noise", label="Noise", min=0, max = 4, value = 0, step= 0.2),
+      checkboxInput(inputId="scale", label="Scale Output by Rows",value=TRUE),
+      #numericInput("clusters", "Cluster Count", 3, min = 1, max=9),
+      dataTableOutput("table")  
+    ),
+    mainPanel(
+      plotOutput("plot2")
+    )
+  )
+  ),
+  
+  server = function(input, output) {
+    iris5 <- reactive({
+           
+      out <- iris1[,2:5] + (noisemat * input$noise) 
+      #out <- data.frame(ID=iris1[,1], out, Species=iris1[,6])
+      out <- scale(out)
+      out
+    })
+      
+  output$plot2 <- renderPlot({
+    
+    colPal <- c("#984EA3","#FF7F00", "#FFFF33", "#A65628", "#F781BF", "#999999")
+    #make cluster assignments compatible with melted iris data frame
+    #clusts <- as.character(rep(clusters(),4))
+    
+    #print(head(iris4()))
+    
+    #print(head(iris5()))
+    
+    #assign each species a color
+    colVec <- as.numeric(iris1$Species)
+    colVec <- sapply(colVec, function(x){colPal[x]})
+    
+    #actual plot
+    #add more parameters to make it more heatmap like
+    #heatmap.2(iris3(),dendrogram = "row")
+    my_palette <- colorRampPalette(c("red", "black", "green"))(n = 299)
+
+    if(input$scale){
+      scaleRow <- "row"
+    } else { scaleRow="none"}
+    
+    distFunc <- function(x) as.dist(1-cor(t(x)))
+    heatmap.2(as.matrix(iris5()),
+            distfun = distFunc,
+      #cellnote = iris3(),  # same data set for cell labels
+      #main = "Correlation", # heat map title
+      #notecol="black",      # change font color of cell labels to black
+      density.info="none",  # turns off density plot inside color legend
+      trace="none",         # turns off trace lines inside the heat map
+      RowSideColors = colVec,
+      scale = scaleRow,
+      #margins =c(12,9),     # widens margins around plot
+      col=my_palette,       # use on color palette defined earlier 
+      #breaks=col_breaks,    # enable color transition at specified limits
+      dendrogram="row"     # only draw a row dendrogram
+      )      
+  })   
+  },
+  options = list(height = 500)
+)
+```
+
+## Strategies for avoiding noise
+
+Filtering out profiles that are close to baseline and are probably mostly noise can help with the clustering. 
+
+## The effect of range on euclidean-based algorithms
+```{r echo=FALSE}
+###want dataset with slider
+###increase range of data using multiplier?
+###will need to winzorize data to ensure it doesn't go below 0
+
+```
+## What is the best clustering algorithm?
+
+There is no best clustering algorithm. You need to understand the strengths and weaknesses of each method.
+
+You can assess the robustness of clusterings across methods, which is what my Master's project was about.
+
+##Caveats with clustering
+
+Clustering methods will always give you an answer. They are really good for exploratory purposes, but you should be cautious in comparing datasets.
+
+## Comparing Clusterings
+
+How can we assess robustness? Let's start with two clusterings. Assuming your two clusterings have a similar number of groups, you can use confusion matrices to directly compare them. That way, you can see what clusters correspond.
+
+You can also permute the columns of the matrix to try and maximize the diagonal. This may help you find the closest analogues.
+
+```{r}
+
+```
+
+## Heatmaps
+
+Heatmaps are just hierarchical clusterings done on both the columns and rows.
